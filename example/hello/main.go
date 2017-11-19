@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/fluent/fluent-logger-golang/fluent"
 	"github.com/teambition/gear"
 	"github.com/teambition/gear/logging"
 )
@@ -9,8 +10,14 @@ import (
 func main() {
 	app := gear.New()
 
+	fc, err := fluent.New(fluent.Config{FluentPort: 24224, FluentHost: "127.0.0.1", MarshalAsJSON: true})
+	if err != nil {
+		panic(err)
+	}
+	logger := logging.Default()
+	logger.SetOutput(fc.EncodeAndPostData)
 	// Add logging middleware
-	app.UseHandler(logging.Default(true))
+	app.UseHandler(logger)
 
 	// Add router middleware
 	router := gear.NewRouter()

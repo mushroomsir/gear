@@ -193,17 +193,32 @@ func New(w io.Writer) *Logger {
 		log["Start"] = time.Now()
 	}
 
-	logger.consume = func(log Log, _ *gear.Context) {
+	logger.consume = func(log Log, ctx *gear.Context) {
 		end := time.Now()
 		if t, ok := log["Start"].(time.Time); ok {
 			log["Time"] = end.Sub(t) / 1e6 // ms
 		}
-
-		if str, err := log.Format(); err == nil {
-			logger.Output(end, InfoLevel, str)
-		} else {
-			logger.Output(end, WarningLevel, log.String())
+		if err := logger.Output(InfoLevel.String(), end, log); err != nil {
+			ctx.LogErr(err)
 		}
+	}
+
+	logger.output = func(tag string, t time.Time, v interface{}) error {
+		s, err := format(v)
+		if err != nil {
+			return err
+		}
+		if l := len(s); l > 0 && s[l-1] == '\n' {
+			s = s[0 : l-1]
+		}
+
+		logger.mu.Lock()
+		defer logger.mu.Unlock()
+		_, err = fmt.Fprintf(logger.Out, logger.lf, t.UTC().Format(logger.tf), tag, crlfEscaper.Replace(s))
+		if err == nil {
+			logger.Out.Write([]byte{'\n'})
+		}
+		return err
 	}
 	return logger
 }
@@ -219,26 +234,9 @@ func New(w io.Writer) *Logger {
 //
 //  logger := logging.New(os.Stdout)
 //  logger.SetLevel(logging.InfoLevel)
-//  logger.SetLogInit(func(log logging.Log, ctx *gear.Context) {
-//  	log["IP"] = ctx.IP()
-//  	log["Method"] = ctx.Method
-//  	log["URL"] = ctx.Req.URL.String()
-//  	log["Start"] = time.Now()
-//  	log["UserAgent"] = ctx.GetHeader(gear.HeaderUserAgent)
-//  })
-//  logger.SetLogConsume(func(log logging.Log, _ *gear.Context) {
-//  	end := time.Now()
-//  	if str, err := log.Format(); err == nil {
-//  		logger.Output(end, logging.InfoLevel, str)
-//  	} else {
-//  		logger.Output(end, logging.WarningLevel, log.String())
-//  	}
-//  })
-//
 //  app.UseHandler(logger)
 //  app.Use(func(ctx *gear.Context) error {
-//  	log := logger.FromCtx(ctx)
-//  	log["Data"] = []int{1, 2, 3}
+//  	logger.SetTo(ctx, "Data", []int{1, 2, 3})
 //  	return ctx.HTML(200, "OK")
 //  })
 //
@@ -252,6 +250,7 @@ type Logger struct {
 	mu      sync.Mutex               // ensures atomic writes; protects the following fields
 	init    func(Log, *gear.Context) // hook to initialize log with gear.Context
 	consume func(Log, *gear.Context) // hook to consume log
+	output  func(string, time.Time, interface{}) error
 }
 
 // Check log output level statisfy output level or not, used internal, for performance
@@ -261,78 +260,86 @@ func (l *Logger) checkLogLevel(level Level) bool {
 }
 
 // Emerg produce a "Emergency" log
-func (l *Logger) Emerg(v interface{}) {
-	l.Output(time.Now(), EmergLevel, formatError(v))
+func (l *Logger) Emerg(v interface{}) error {
+	return l.Output(EmergLevel.String(), time.Now(), gear.ErrorWithStack(v, 2))
 }
 
 // Alert produce a "Alert" log
-func (l *Logger) Alert(v interface{}) {
+func (l *Logger) Alert(v interface{}) error {
 	if l.checkLogLevel(AlertLevel) {
-		l.Output(time.Now(), AlertLevel, formatError(v))
+		return l.Output(AlertLevel.String(), time.Now(), gear.ErrorWithStack(v, 2))
 	}
+	return nil
 }
 
 // Crit produce a "Critical" log
-func (l *Logger) Crit(v interface{}) {
+func (l *Logger) Crit(v interface{}) error {
 	if l.checkLogLevel(CritiLevel) {
-		l.Output(time.Now(), CritiLevel, formatError(v))
+		return l.Output(CritiLevel.String(), time.Now(), gear.ErrorWithStack(v, 2))
 	}
+	return nil
 }
 
 // Err produce a "Error" log
-func (l *Logger) Err(v interface{}) {
+func (l *Logger) Err(v interface{}) error {
 	if l.checkLogLevel(ErrLevel) {
-		l.Output(time.Now(), ErrLevel, formatError(v))
+		return l.Output(ErrLevel.String(), time.Now(), gear.ErrorWithStack(v, 2))
 	}
+	return nil
 }
 
 // Warning produce a "Warning" log
-func (l *Logger) Warning(v interface{}) {
+func (l *Logger) Warning(v interface{}) error {
 	if l.checkLogLevel(WarningLevel) {
-		l.Output(time.Now(), WarningLevel, format(v))
+		return l.Output(WarningLevel.String(), time.Now(), v)
 	}
+	return nil
 }
 
 // Notice produce a "Notice" log
-func (l *Logger) Notice(v interface{}) {
+func (l *Logger) Notice(v interface{}) error {
 	if l.checkLogLevel(NoticeLevel) {
-		l.Output(time.Now(), NoticeLevel, format(v))
+		return l.Output(NoticeLevel.String(), time.Now(), v)
 	}
+	return nil
 }
 
 // Info produce a "Informational" log
-func (l *Logger) Info(v interface{}) {
+func (l *Logger) Info(v interface{}) error {
 	if l.checkLogLevel(InfoLevel) {
-		l.Output(time.Now(), InfoLevel, format(v))
+		return l.Output(InfoLevel.String(), time.Now(), v)
 	}
+	return nil
 }
 
 // Debug produce a "Debug" log
-func (l *Logger) Debug(v interface{}) {
+func (l *Logger) Debug(v interface{}) error {
 	if l.checkLogLevel(DebugLevel) {
-		l.Output(time.Now(), DebugLevel, format(v))
+		return l.Output(DebugLevel.String(), time.Now(), v)
 	}
+	return nil
 }
 
 // Debugf produce a "Debug" log in the manner of fmt.Printf
-func (l *Logger) Debugf(format string, args ...interface{}) {
+func (l *Logger) Debugf(format string, args ...interface{}) error {
 	if l.checkLogLevel(DebugLevel) {
-		l.Output(time.Now(), DebugLevel, fmt.Sprintf(format, args...))
+		return l.Output(DebugLevel.String(), time.Now(), fmt.Sprintf(format, args...))
 	}
+	return nil
 }
 
 // Panic produce a "Emergency" log and then calls panic with the message
 func (l *Logger) Panic(v interface{}) {
-	s := format(v)
-	l.Emerg(s)
-	panic(s)
+	err := gear.ErrorWithStack(v, 2)
+	l.Output(EmergLevel.String(), time.Now(), err)
+	panic(err)
 }
 
 var exit = func() { os.Exit(1) }
 
 // Fatal produce a "Emergency" log and then calls os.Exit(1)
 func (l *Logger) Fatal(v interface{}) {
-	l.Emerg(v)
+	l.Output(EmergLevel.String(), time.Now(), gear.ErrorWithStack(v, 2))
 	exit()
 }
 
@@ -360,18 +367,8 @@ func (l *Logger) Println(args ...interface{}) {
 // Output writes a string log with timestamp and log level to the output.
 // If the level is greater than logger level, the log will be omitted.
 // The log will be format by timeFormat and logFormat.
-func (l *Logger) Output(t time.Time, level Level, s string) (err error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if l := len(s); l > 0 && s[l-1] == '\n' {
-		s = s[0 : l-1]
-	}
-	_, err = fmt.Fprintf(l.Out, l.lf, t.UTC().Format(l.tf), level.String(), crlfEscaper.Replace(s))
-	if err == nil {
-		l.Out.Write([]byte{'\n'})
-	}
-	return
+func (l *Logger) Output(tag string, t time.Time, v interface{}) (err error) {
+	return l.output(tag, t, v)
 }
 
 // SetLevel set the logger's log level
@@ -416,15 +413,28 @@ func (l *Logger) SetLogInit(fn func(Log, *gear.Context)) *Logger {
 
 // SetLogConsume set a log consumer handle to the logger.
 // It will be called on a "end hook" and should write the log to underlayer logging system.
-// The default implements is for development, the output log format:
-//
-//   127.0.0.1 GET /text 200 6500 - 0.765 ms
-//
-// Please implements a Log Consume for your production.
 func (l *Logger) SetLogConsume(fn func(Log, *gear.Context)) *Logger {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.consume = fn
+	return l
+}
+
+// SetOutput set a log output handle to the logger. It only work with logger.Emerg, logger.Alert,
+// logger.Crit, logger.Err, logger.Warning, logger.Notice, logger.Info, logger.Debug, logger.Debugf and logger.Output.
+// Use fluent client as output handle:
+//
+//  fc, err := fluent.New(fluent.Config{FluentPort: 24224, FluentHost: "127.0.0.1", MarshalAsJSON: true})
+//  if err != nil {
+//  	panic(err)
+//  }
+//  logger.SetOutput(fc.EncodeAndPostData)
+//
+// Please implements a Log Consume for your production.
+func (l *Logger) SetOutput(fn func(string, time.Time, interface{}) error) *Logger {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.output = fn
 	return l
 }
 
@@ -479,48 +489,48 @@ func (l *Logger) Serve(ctx *gear.Context) error {
 }
 
 // Emerg produce a "Emergency" log with the default logger
-func Emerg(v interface{}) {
-	std.Emerg(v)
+func Emerg(v interface{}) error {
+	return std.Emerg(v)
 }
 
 // Alert produce a "Alert" log with the default logger
-func Alert(v interface{}) {
-	std.Alert(v)
+func Alert(v interface{}) error {
+	return std.Alert(v)
 }
 
 // Crit produce a "Critical" log with the default logger
-func Crit(v interface{}) {
-	std.Crit(v)
+func Crit(v interface{}) error {
+	return std.Crit(v)
 }
 
 // Err produce a "Error" log with the default logger
-func Err(v interface{}) {
-	std.Err(v)
+func Err(v interface{}) error {
+	return std.Err(v)
 }
 
 // Warning produce a "Warning" log with the default logger
-func Warning(v interface{}) {
-	std.Warning(v)
+func Warning(v interface{}) error {
+	return std.Warning(v)
 }
 
 // Notice produce a "Notice" log with the default logger
-func Notice(v interface{}) {
-	std.Notice(v)
+func Notice(v interface{}) error {
+	return std.Notice(v)
 }
 
 // Info produce a "Informational" log with the default logger
-func Info(v interface{}) {
-	std.Info(v)
+func Info(v interface{}) error {
+	return std.Info(v)
 }
 
 // Debug produce a "Debug" log with the default logger
-func Debug(v interface{}) {
-	std.Debug(v)
+func Debug(v interface{}) error {
+	return std.Debug(v)
 }
 
 // Debugf produce a "Debug" log in the manner of fmt.Printf with the default logger
-func Debugf(format string, args ...interface{}) {
-	std.Debugf(format, args...)
+func Debugf(format string, args ...interface{}) error {
+	return std.Debugf(format, args...)
 }
 
 // Panic produce a "Emergency" log with the default logger and then calls panic with the message
@@ -579,22 +589,15 @@ func colorStatus(code int) ColorType {
 	}
 }
 
-func formatError(i interface{}) string {
-	err := gear.ErrorWithStack(i, 3)
-	if str, e := err.Format(); e == nil {
-		return str
-	}
-	return err.String()
-}
-
-func format(i interface{}) string {
+func format(i interface{}) (string, error) {
 	switch v := i.(type) {
 	case Messager:
-		if str, err := v.Format(); err == nil {
-			return str
+		str, err := v.Format()
+		if err == nil {
+			return str, nil
 		}
-		return v.String()
+		return v.String(), err
 	default:
-		return fmt.Sprint(i)
+		return fmt.Sprint(i), nil
 	}
 }

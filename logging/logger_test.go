@@ -121,47 +121,47 @@ func TestGearLogger(t *testing.T) {
 		var buf bytes.Buffer
 
 		logger.Out = &buf
-		logger.Emerg("Hello")
+		assert.Nil(logger.Emerg("Hello"))
 		assert.True(strings.Index(buf.String(), "Z] EMERG {") > 0)
 		buf.Reset()
 
-		Emerg("Hello1")
+		assert.Nil(Emerg("Hello1"))
 		assert.True(strings.Index(buf.String(), "Z] EMERG {") > 0)
 		buf.Reset()
 
-		logger.Alert("Hello")
+		assert.Nil(logger.Alert("Hello"))
 		assert.True(strings.Index(buf.String(), "Z] ALERT {") > 0)
 		buf.Reset()
 
-		Alert("Hello1")
+		assert.Nil(Alert("Hello1"))
 		assert.True(strings.Index(buf.String(), "Z] ALERT {") > 0)
 		buf.Reset()
 
-		logger.Crit("Hello")
+		assert.Nil(logger.Crit("Hello"))
 		assert.True(strings.Index(buf.String(), "Z] CRIT {") > 0)
 		buf.Reset()
 
-		Crit("Hello1")
+		assert.Nil(Crit("Hello1"))
 		assert.True(strings.Index(buf.String(), "Z] CRIT {") > 0)
 		buf.Reset()
 
-		logger.Err("Hello")
+		assert.Nil(logger.Err("Hello"))
 		assert.True(strings.Index(buf.String(), "Z] ERR {") > 0)
 		buf.Reset()
 
-		Err("Hello1")
+		assert.Nil(Err("Hello1"))
 		assert.True(strings.Index(buf.String(), "Z] ERR {") > 0)
 		buf.Reset()
 
-		logger.Err(Log{"error": math.NaN()})
+		assert.Nil(logger.Err(Log{"error": math.NaN()}))
 		assert.True(strings.Contains(buf.String(), "Log{error:NaN}"))
 		buf.Reset()
 
 		err := gear.Err.WithMsg("test")
 		err.Data = math.NaN()
-		logger.Err(err)
-		assert.True(strings.Contains(buf.String(), "] ERR Error{"))
-		assert.True(strings.Contains(buf.String(), "Data:NaN"))
+		assert.NotNil(logger.Err(err))
+		// assert.True(strings.Contains(buf.String(), "] ERR Error{"))
+		// assert.True(strings.Contains(buf.String(), "Data:NaN"))
 		buf.Reset()
 
 		logger.Warning("Hello")
@@ -192,12 +192,12 @@ func TestGearLogger(t *testing.T) {
 		assert.True(strings.HasSuffix(buf.String(), "Z] INFO Hello\n"))
 		buf.Reset()
 
-		logger.Info(Log{"name": "gear"})
+		assert.Nil(logger.Info(Log{"name": "gear"}))
 		assert.True(strings.HasSuffix(buf.String(), "Z] INFO {\"name\":\"gear\"}\n"))
 		buf.Reset()
 
-		logger.Info(Log{"nan": math.NaN()})
-		assert.True(strings.HasSuffix(buf.String(), "Z] INFO Log{nan:NaN}\n"))
+		assert.NotNil(logger.Info(Log{"nan": math.NaN()}))
+		// assert.True(strings.HasSuffix(buf.String(), "Z] INFO Log{nan:NaN}\n"))
 		buf.Reset()
 
 		Info("Hello\r\n1\r\n")
@@ -264,19 +264,19 @@ func TestGearLogger(t *testing.T) {
 		assert.Equal(buf.String(), "Hello1\n")
 		buf.Reset()
 
-		logger.Output(time.Now(), InfoLevel, "Hello")
+		logger.Output(InfoLevel.String(), time.Now(), "Hello")
 		assert.True(strings.HasSuffix(buf.String(), "INFO Hello\n"))
 		buf.Reset()
 
-		logger.Output(time.Now(), InfoLevel, "")
+		logger.Output(InfoLevel.String(), time.Now(), "")
 		assert.True(strings.HasSuffix(buf.String(), "INFO \n"))
 		buf.Reset()
 
-		logger.Output(time.Now(), InfoLevel, "\n")
+		logger.Output(InfoLevel.String(), time.Now(), "\n")
 		assert.True(strings.HasSuffix(buf.String(), "INFO \n"))
 		buf.Reset()
 
-		logger.Output(time.Now(), InfoLevel, "\r")
+		logger.Output(InfoLevel.String(), time.Now(), "\r")
 		assert.True(strings.HasSuffix(buf.String(), "INFO \\r\n"))
 		buf.Reset()
 
@@ -352,12 +352,13 @@ func TestGearLoggerMiddleware(t *testing.T) {
 		logger.mu.Lock()
 		log = buf.String()
 		logger.mu.Unlock()
-		assert.Contains(log, time.Now().UTC().Format(time.RFC3339)[0:16])
-		assert.Contains(log, "] WARNING ")
-		assert.Contains(log, `Data:NaN`)
-		assert.Contains(log, `Method:"GET"`)
-		assert.Contains(log, `Length:2`)
-		assert.Contains(log, `Status:200`)
+		assert.Empty(log)
+		// assert.Contains(log, time.Now().UTC().Format(time.RFC3339)[0:16])
+		// assert.Contains(log, "] INFO ")
+		// assert.Contains(log, `Data:NaN`)
+		// assert.Contains(log, `Method:"GET"`)
+		// assert.Contains(log, `Length:2`)
+		// assert.Contains(log, `Status:200`)
 		res.Body.Close()
 
 		buf.Reset()
@@ -421,14 +422,11 @@ func TestGearLoggerMiddleware(t *testing.T) {
 				log["Start"] = time.Now()
 				log["UserAgent"] = ctx.GetHeader(gear.HeaderUserAgent)
 			}).
-			SetLogConsume(func(log Log, _ *gear.Context) {
+			SetLogConsume(func(log Log, ctx *gear.Context) {
 				end := time.Now()
 				log["Time"] = end.Sub(log["Start"].(time.Time)) / 1e6
-				delete(log, "Start")
-				if res, err := log.Format(); err == nil {
-					logger.Output(end, InfoLevel, res)
-				} else {
-					logger.Output(end, WarningLevel, log.String())
+				if err := logger.Output(InfoLevel.String(), end, log); err != nil {
+					ctx.LogErr(err)
 				}
 			})
 
@@ -477,14 +475,11 @@ func TestGearLoggerMiddleware(t *testing.T) {
 				log["Start"] = time.Now()
 				log["UserAgent"] = ctx.GetHeader(gear.HeaderUserAgent)
 			}).
-			SetLogConsume(func(log Log, _ *gear.Context) {
+			SetLogConsume(func(log Log, ctx *gear.Context) {
 				end := time.Now()
 				log["Time"] = end.Sub(log["Start"].(time.Time)) / 1e6
-				delete(log, "Start")
-				if res, err := log.Format(); err == nil {
-					logger.Output(end, InfoLevel, res)
-				} else {
-					logger.Output(end, WarningLevel, log.String())
+				if err := logger.Output(InfoLevel.String(), end, log); err != nil {
+					ctx.LogErr(err)
 				}
 			})
 
