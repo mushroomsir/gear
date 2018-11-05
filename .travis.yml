@@ -1,27 +1,12 @@
 sudo: false
 language: go
-go:
-  - "1.9.5"
-  - "1.9.6"
-  - "1.9.7"
-  - "1.10"
-  - "1.10.1"
-  - "1.10.2"
-  - "1.10.3"
-  - "1.10.4"
-  - "1.11"
-before_install:
-  - go get -v -t ./...
-  - go get github.com/modocache/gover
-  - go get github.com/mattn/goveralls
+  - go: "1.9.x"
+  - go: "1.10.x"
+  - go: "1.11.x"
+  
+env:
+  - GO111MODULE=on
+
 script:
-  - go test -coverprofile=gear.coverprofile
-  - go test -coverprofile=logging.coverprofile ./logging
-  - go test -coverprofile=cors.coverprofile ./middleware/cors
-  - go test -coverprofile=favicon.coverprofile ./middleware/favicon
-  - go test -coverprofile=grpc.coverprofile ./middleware/grpc
-  - go test -coverprofile=secure.coverprofile ./middleware/secure
-  - go test -coverprofile=static.coverprofile ./middleware/static
-  - go test -coverprofile=static.coverprofile ./middleware/requestid
-  - gover
-  - goveralls -coverprofile=gover.coverprofile -service=travis-ci
+  - go get -t -v ./...
+  - go test -v ./...
